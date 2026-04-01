@@ -1,168 +1,101 @@
+import java.io.*;
 import java.util.*;
-import java.util.concurrent.*;
 
-import java.util.*;
-import java.util.concurrent.*;
+// Entities must implement Serializable to be saved to disk
+class Booking implements Serializable {
+    private static final long serialVersionUID = 1L;
+    String guestName;
+    String roomType;
+    String bookingId;
 
-// Reservation class
-class Reservation {
-    private String reservationId;
-    private String guestName;
-    private String roomType;
-    private int numOfRooms;
-
-    public Reservation(String reservationId, String guestName, String roomType, int numOfRooms) {
-        this.reservationId = reservationId;
+    public Booking(String guestName, String roomType, String bookingId) {
         this.guestName = guestName;
         this.roomType = roomType;
-        this.numOfRooms = numOfRooms;
-    }
-
-    public String getReservationId() { return reservationId; }
-    public String getGuestName() { return guestName; }
-    public String getRoomType() { return roomType; }
-    public int getNumOfRooms() { return numOfRooms; }
-
-    public void displayReservation() {
-        System.out.println("Reservation ID: " + reservationId +
-                ", Guest: " + guestName +
-                ", Room Type: " + roomType +
-                ", Rooms: " + numOfRooms);
-    }
-}
-
-// Thread-safe Inventory Manager
-class InventoryManager {
-    private final Map<String, Integer> roomInventory;
-
-    public InventoryManager() {
-        roomInventory = new HashMap<>();
-        roomInventory.put("Single Room", 5);
-        roomInventory.put("Double Room", 3);
-        roomInventory.put("Suite Room", 2);
-    }
-
-    // Synchronized method for safe room allocation
-    public synchronized boolean allocateRooms(String roomType, int numOfRooms) {
-        int available = roomInventory.getOrDefault(roomType, 0);
-        if (numOfRooms <= 0 || numOfRooms > available) return false;
-        roomInventory.put(roomType, available - numOfRooms);
-        return true;
-    }
-
-    public synchronized void displayInventory() {
-        System.out.println("\n--- Current Room Inventory ---");
-        for (Map.Entry<String, Integer> entry : roomInventory.entrySet()) {
-            System.out.println(entry.getKey() + ": " + entry.getValue() + " available");
-        }
-    }
-}
-
-// Shared booking queue
-class BookingQueue {
-    private final Queue<Reservation> queue = new LinkedList<>();
-
-    public synchronized void addReservation(Reservation res) {
-        queue.offer(res);
-        System.out.println("Booking request added: " + res.getGuestName());
-    }
-
-    public synchronized Reservation pollReservation() {
-        return queue.poll();
-    }
-
-    public synchronized boolean isEmpty() {
-        return queue.isEmpty();
-    }
-}
-
-// Worker thread to process bookings
-class BookingProcessor implements Runnable {
-    private final BookingQueue bookingQueue;
-    private final InventoryManager inventoryManager;
-    private final List<Reservation> confirmedBookings;
-
-    public BookingProcessor(BookingQueue bookingQueue, InventoryManager inventoryManager, List<Reservation> confirmedBookings) {
-        this.bookingQueue = bookingQueue;
-        this.inventoryManager = inventoryManager;
-        this.confirmedBookings = confirmedBookings;
+        this.bookingId = bookingId;
     }
 
     @Override
-    public void run() {
-        while (true) {
-            Reservation res;
-            synchronized (bookingQueue) {
-                if (bookingQueue.isEmpty()) break;
-                res = bookingQueue.pollReservation();
-            }
-
-            if (res != null) {
-                boolean allocated = inventoryManager.allocateRooms(res.getRoomType(), res.getNumOfRooms());
-                if (allocated) {
-                    synchronized (confirmedBookings) {
-                        confirmedBookings.add(res);
-                    }
-                    System.out.println("Reservation confirmed for " + res.getGuestName());
-                } else {
-                    System.out.println("Failed to allocate rooms for " + res.getGuestName() +
-                            " (" + res.getRoomType() + ")");
-                }
-            }
-        }
+    public String toString() {
+        return "[" + bookingId + "] " + guestName + " - " + roomType;
     }
 }
 
-// Main program for UC11
-public class BookMyStayApp {
+public class BookMyStayApp implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private static final String DATA_FILE = "system_state.dat";
+
+    // System State
+    private Map<String, Integer> inventory = new HashMap<>();
+    private List<Booking> bookings = new ArrayList<>();
+
+    public BookMyStayApp() {
+        // Default values for a fresh system
+        inventory.put("Single", 10);
+        inventory.put("Double", 5);
+    }
+
+    public void createBooking(String name, String type) {
+        if (inventory.getOrDefault(type, 0) > 0) {
+            String id = "RES" + (bookings.size() + 500);
+            bookings.add(new Booking(name, type, id));
+            inventory.put(type, inventory.get(type) - 1);
+            System.out.println("Success: Booking confirmed for " + name);
+        } else {
+            System.out.println("Error: No " + type + " rooms available.");
+        }
+    }
+
+    public void showStatus() {
+        System.out.println("\n--- Current System Snapshot ---");
+        System.out.println("Inventory: " + inventory);
+        System.out.println("Total Bookings: " + bookings.size());
+        bookings.forEach(System.out::println);
+        System.out.println("-------------------------------\n");
+    }
+
+    // PERSISTENCE LOGIC
+    public void saveToDisk() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(DATA_FILE))) {
+            oos.writeObject(this);
+            System.out.println(">>> System state persisted to " + DATA_FILE);
+        } catch (IOException e) {
+            System.out.println(">>> Error saving state: " + e.getMessage());
+        }
+    }
+
+    public static BookMyStayApp loadFromDisk() {
+        File file = new File(DATA_FILE);
+        if (!file.exists()) {
+            System.out.println(">>> No previous state found. Initializing fresh system...");
+            return new BookMyStayApp();
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(DATA_FILE))) {
+            System.out.println(">>> Recovery Successful: Restoring state from disk.");
+            return (BookMyStayApp) ois.readObject();
+        } catch (Exception e) {
+            System.out.println(">>> Recovery Failed: Starting fresh system.");
+            return new BookMyStayApp();
+        }
+    }
+
     public static void main(String[] args) {
-        System.out.println("=====================================");
-        System.out.println("   Concurrent Booking Simulation (UC11)");
-        System.out.println("=====================================");
+        // 1. Recover System
+        BookMyStayApp app = BookMyStayApp.loadFromDisk();
 
-        InventoryManager inventoryManager = new InventoryManager();
-        BookingQueue bookingQueue = new BookingQueue();
-        List<Reservation> confirmedBookings = Collections.synchronizedList(new ArrayList<>());
-
-        // Sample booking requests
-        Reservation[] sampleRequests = {
-                new Reservation("R001", "Alice", "Single Room", 1),
-                new Reservation("R002", "Bob", "Double Room", 2),
-                new Reservation("R003", "Charlie", "Suite Room", 1),
-                new Reservation("R004", "Diana", "Single Room", 2),
-                new Reservation("R005", "Eve", "Double Room", 1)
-        };
-
-        // Add requests to queue
-        for (Reservation res : sampleRequests) {
-            bookingQueue.addReservation(res);
+        // 2. Perform some operations
+        if (app.bookings.isEmpty()) {
+            app.createBooking("John Doe", "Double");
+            app.createBooking("Jane Smith", "Single");
+        } else {
+            System.out.println("Continuing session... Adding new booking.");
+            app.createBooking("Guest_" + System.currentTimeMillis() % 1000, "Single");
         }
 
-        // Create multiple threads to process bookings concurrently
-        int numThreads = 3;
-        Thread[] workers = new Thread[numThreads];
-        for (int i = 0; i < numThreads; i++) {
-            workers[i] = new Thread(new BookingProcessor(bookingQueue, inventoryManager, confirmedBookings));
-            workers[i].start();
-        }
+        app.showStatus();
 
-        // Wait for all threads to finish
-        for (Thread t : workers) {
-            try {
-                t.join();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
-
-        // Display results
-        System.out.println("\n--- Confirmed Bookings ---");
-        for (Reservation res : confirmedBookings) {
-            res.displayReservation();
-        }
-
-        inventoryManager.displayInventory();
-
-        System.out.println("\nUC11 Concurrent Booking Simulation Completed!");
+        // 3. Persist before exiting
+        app.saveToDisk();
+        System.out.println("Application closing. Data is safe.");
     }
 }
